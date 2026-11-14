@@ -1,0 +1,13 @@
+# Same Python standard as the Tons of Skills marketplace (its ruff.toml).
+line-length = 120
+target-version = "py312"
+extend-exclude = [".cache"]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E402", "E741"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

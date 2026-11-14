@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS = ROOT / "plugins/saas-packs/coreweave-pack/skills"
+SKILLS = ROOT / "skills"
 
 
 def module(name, skill, filename):

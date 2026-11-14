@@ -11,7 +11,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PATH = ROOT / "plugins/saas-packs/coreweave-pack/shared/review-cost-plan.py"
+PATH = ROOT / "shared/review-cost-plan.py"
 spec = importlib.util.spec_from_file_location("cw_gate", PATH)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)

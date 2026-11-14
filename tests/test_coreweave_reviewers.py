@@ -9,7 +9,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS = ROOT / "plugins/saas-packs/coreweave-pack/skills"
+SKILLS = ROOT / "skills"
 HELPERS = {
     "core-workflow-a": "review-inference.py",
     "core-workflow-b": "review-training.py",

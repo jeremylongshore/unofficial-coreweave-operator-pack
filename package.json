@@ -44,8 +44,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jeremylongshore/tons-of-skills-marketplace.git",
-    "directory": "plugins/saas-packs/coreweave-pack"
+    "url": "git+https://github.com/jeremylongshore/unofficial-coreweave-operator-pack.git"
   },
   "homepage": "https://tonsofskills.com/learn/coreweave/",
   "publishConfig": {

@@ -3,6 +3,9 @@
 
 Does not invoke model providers or platform APIs. A passing offline contract is not
 behavioral/production certification. Gitleaks must be installed; absence fails closed.
+
+Run tools/setup.sh first: it fetches the Tons of Skills marketplace schema validator at a
+pinned commit (the grading authority), its kernel schemas, j-rig and gitleaks into .cache/.
 """
 
 import argparse
@@ -20,7 +23,10 @@ import tempfile
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-PACK = ROOT / "plugins/saas-packs/coreweave-pack"
+PACK = ROOT
+CACHE = ROOT / ".cache"
+SCHEMA_VALIDATOR = Path(os.environ.get("CW_SCHEMA_VALIDATOR", CACHE / "marketplace/scripts/validate-skills-schema.py"))
+JRIG = CACHE / "marketplace/node_modules/.bin/j-rig"
 HELPERS = {
     "core-workflow-a": "review-inference.py",
     "core-workflow-b": "review-training.py",
@@ -45,9 +51,15 @@ def command(args, **kwargs):
     return p.stdout
 
 
-def links(root):
+def tracked(pattern):
+    """Tracked files only: .cache/ and other local state are not part of the pack."""
+    out = subprocess.run(["git", "ls-files", "-z", pattern], cwd=ROOT, capture_output=True, check=True)
+    return [ROOT / name for name in out.stdout.decode().split("\0") if name]
+
+
+def links(root, files=None):
     errors = []
-    for path in root.rglob("*.md"):
+    for path in files if files is not None else root.rglob("*.md"):
         for target in re.findall(r"\]\(([^)\n]+)\)", path.read_text()):
             if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target) or target.startswith("#"):
                 continue
@@ -61,7 +73,12 @@ def links(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, help="Write a local result receipt; not a certification")
-    parser.add_argument("--gitleaks", default="gitleaks", help="Installed gitleaks executable")
+    local_gitleaks = CACHE / "bin/gitleaks"
+    parser.add_argument(
+        "--gitleaks",
+        default=str(local_gitleaks) if local_gitleaks.exists() else "gitleaks",
+        help="Installed gitleaks executable (default: .cache/bin/gitleaks from tools/setup.sh)",
+    )
     args = parser.parse_args()
     errors = []
     receipt = {
@@ -72,7 +89,7 @@ def main():
         "behavioral_evaluation": "NOT RUN",
         "live_account_validation": "NOT RUN",
     }
-    spec = importlib.util.spec_from_file_location("cw_canonical_validator", ROOT / "scripts/validate-skills-schema.py")
+    spec = importlib.util.spec_from_file_location("cw_canonical_validator", SCHEMA_VALIDATOR)
     canonical = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = canonical
     spec.loader.exec_module(canonical)
@@ -105,7 +122,7 @@ def main():
                 PACK / "shared/review_common.py"
             ).read_bytes():
                 errors.append(str(skill) + ": shared evidence helper drift")
-    errors.extend(links(PACK))
+    errors.extend(links(PACK, [path for path in tracked("*.md") if not path.is_relative_to(ROOT / "tests")]))
     # Curated installations contain one skill, without the surrounding plugin tree.
     for skill in skills:
         errors.extend(links(skill.parent))
@@ -126,7 +143,7 @@ def main():
     errors.extend(manifest_result.get("errors", []))
     # No live connector or execution hook is needed for this offline product.
     # Fail rather than silently calling a newly introduced unreviewed component absent.
-    present = list(PACK.rglob("hooks.json")) + list(PACK.rglob(".mcp.json"))
+    present = tracked("*hooks.json") + tracked("*.mcp.json")
     manifest = json.loads((PACK / ".claude-plugin/plugin.json").read_text())
     if present or manifest.get("hooks") or manifest.get("mcpServers"):
         errors.append(
@@ -163,7 +180,7 @@ def main():
                     raise ValueError(name + ": invalid or duplicate eval identities")
                 if any(not set(c["criteria_ids"]) <= criteria for c in cases):
                     raise ValueError(name + ": unknown criterion reference")
-                package = json.loads(command(["pnpm", "exec", "j-rig", "check", str(path.parent), "--json"]))
+                package = json.loads(command([str(JRIG), "check", str(path.parent), "--json"]))
                 if package.get("summary", {}).get("errors", 1):
                     raise ValueError(name + ": package integrity failed")
                 passed = 0
@@ -218,7 +235,8 @@ def main():
             executable = shutil.which(args.gitleaks)
             if not executable:
                 raise ValueError("gitleaks executable missing; secret scan cannot be skipped")
-            command([executable, "dir", str(PACK), "--redact", "--no-banner"])
+            # Whole git history, not just the working tree: a removed secret is still published.
+            command([executable, "git", str(ROOT), "--redact", "--no-banner"])
             receipt["gitleaks"] = "PASS"
     except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
         errors.append(str(exc))

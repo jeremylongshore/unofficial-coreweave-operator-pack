@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks scans the full history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Python dependencies
+        run: python -m pip install --quiet pyyaml==6.0.2 pytest==8.3.5 ruff==0.15.22
+      - name: Pinned toolchain (grader, kernel schemas, j-rig, gitleaks)
+        run: tools/setup.sh
+      - name: Lint
+        run: ruff check . && ruff format --check .
+      - name: Tests
+        run: python -m pytest -q tests
+      - name: Diagnostic self-tests
+        run: |
+          python skills/coreweave-fabric-diagnostics/scripts/fabric-check.py --self-test
+          python skills/coreweave-gpu-node-forensics/scripts/triage.py --self-test
+      - name: Pack gate
+        run: python tools/validate-pack.py --report .cache/validation-receipt.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-receipt
+          path: .cache/validation-receipt.json
+          if-no-files-found: ignore
