@@ -57,6 +57,33 @@ def tracked(pattern):
     return [ROOT / name for name in out.stdout.decode().split("\0") if name]
 
 
+def snapshot_worktree(root, destination):
+    """Scan publishable local files without crawling ignored caches or private corpora."""
+    names = (
+        subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=root,
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .split("\0")
+    )
+    for name in sorted(set(names) - {""}):
+        source = root / name
+        # Reject symlinks (including parent components), rather than copying evidence
+        # from outside this checkout into the temporary scan directory.
+        if any(part.is_symlink() for part in (source, *source.parents) if part.is_relative_to(root)):
+            raise ValueError("Secret scan refuses symlink: " + name)
+        if not source.exists():
+            continue  # Deleted tracked file: still covered by the history scan.
+        if not source.is_file() or not source.resolve().is_relative_to(root.resolve()):
+            raise ValueError("Secret scan requires a local regular file: " + name)
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
 def links(root, files=None):
     errors = []
     for path in files if files is not None else root.rglob("*.md"):
@@ -237,7 +264,11 @@ def main():
                 raise ValueError("gitleaks executable missing; secret scan cannot be skipped")
             # Whole git history, not just the working tree: a removed secret is still published.
             command([executable, "git", str(ROOT), "--redact", "--no-banner"])
+            with tempfile.TemporaryDirectory(prefix="cw-secret-scan-") as scan_directory:
+                snapshot_worktree(ROOT, Path(scan_directory))
+                command([executable, "dir", scan_directory, "--redact", "--no-banner"])
             receipt["gitleaks"] = "PASS"
+            receipt["gitleaks_scope"] = "Git history and tracked/non-ignored working-tree files; ignored files excluded"
     except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
         errors.append(str(exc))
     receipt["errors"] = errors

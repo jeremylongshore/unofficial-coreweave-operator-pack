@@ -1,5 +1,8 @@
 # Unofficial community operator pack for CoreWeave
 
+[![CI](https://github.com/jeremylongshore/unofficial-coreweave-operator-pack/actions/workflows/ci.yml/badge.svg)](https://github.com/jeremylongshore/unofficial-coreweave-operator-pack/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **26 skills for GPU operations, evidence review and bounded provisioning workflows.**
 Community-contributed; not affiliated with, endorsed by, or sponsored by CoreWeave, Inc.
 The stable pack name is `coreweave-pack`. This community implementation is MIT licensed.
@@ -83,12 +86,18 @@ This repository is the source of truth; the marketplace copy is synced from it.
 
 ## Reproduce offline validation
 
-Needs Python 3 with PyYAML and pytest, Node 22+ with npm, git and curl:
+Supported setup: Linux x86_64, Python 3.12, Node 22 with npm, Git and curl.
+Toolchain installation downloads dependencies; validation does not require a cloud account.
 
 ```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-dev.txt
 tools/setup.sh                 # pinned grader, kernel schemas, j-rig and gitleaks into .cache/
-python3 tools/validate-pack.py # schema/rubric, links, 11 eval packages, fixtures, gitleaks
-python3 -m pytest tests
+ruff check .
+ruff format --check .
+python tools/validate-pack.py --report .cache/validation-receipt.json
+python -m pytest -q tests
 ```
 
 The gate delegates schema and rubric checks to the Tons of Skills marketplace validator (pinned commit),
@@ -101,6 +110,8 @@ Terraform plan is used as an offline test.
 
 ## Evidence and maintenance
 
+- [Contributing and local checks](CONTRIBUTING.md), [support](SUPPORT.md),
+  [security reporting](SECURITY.md), [code of conduct](CODE_OF_CONDUCT.md) and [changelog](CHANGELOG.md)
 - [Quality and limitations](QUALITY.md) and [local validation receipt](offline-results.json)
 - [Pack blueprint and per-skill designs](docs/BLUEPRINT.md)
 - [Retired scaffold inventory and reasons](docs/SCAFFOLD-DISPOSITION.md)
