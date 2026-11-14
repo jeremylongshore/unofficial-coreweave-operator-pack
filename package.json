@@ -46,7 +46,7 @@
     "type": "git",
     "url": "git+https://github.com/jeremylongshore/unofficial-coreweave-operator-pack.git"
   },
-  "homepage": "https://tonsofskills.com/learn/coreweave/",
+  "homepage": "https://github.com/jeremylongshore/unofficial-coreweave-operator-pack#readme",
   "publishConfig": {
     "access": "public"
   }

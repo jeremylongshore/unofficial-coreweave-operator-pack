@@ -14,6 +14,7 @@ and plugin display versions are separate; this log does not declare an npm relea
 
 - CI action pins and time limits, documented local setup, and working-tree secret scanning.
 - Ignore rules for local credentials, Terraform state and private evidence.
+- Public homepage now points to the canonical repository README instead of a missing marketplace page.
 
 ## Standalone extraction — 2026-11-13
 
