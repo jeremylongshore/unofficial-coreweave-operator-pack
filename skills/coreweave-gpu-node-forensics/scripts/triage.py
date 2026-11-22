@@ -341,18 +341,33 @@ _PENDING_RE = re.compile(r"\bPending\s*:\s*(Yes|No)", re.IGNORECASE)
 _THERMAL_RE = re.compile(r"(HW|SW)\s+Thermal\s+Slowdown\s*:\s*Active", re.IGNORECASE)
 
 
+def row_remapper_pending(text: str) -> bool | None:
+    """Read Pending only within the indentation-delimited remapper section."""
+    section_indent = None
+    for line in text.expandtabs(8).splitlines():
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        if section_indent is not None:
+            if indent <= section_indent:
+                break
+            match = _PENDING_RE.fullmatch(line.strip())
+            if match:
+                return match.group(1).lower() == "yes"
+        elif re.fullmatch(r"(?:Row Remapper|Remapped Rows)\s*:?", line.strip(), re.IGNORECASE):
+            section_indent = indent
+    return None
+
+
 def parse_blob(text: str) -> dict:
     """Extract structured signals from a pasted dmesg / nvidia-smi blob."""
     xids = [int(m) for m in _XID_RE.findall(text)]
     recovery = _RECOVERY_RE.findall(text)
     remap_fail_m = _REMAP_FAIL_RE.search(text)
-    # nvidia-smi -q prints "Remapped Rows"; older docs and tools say "Row Remapper".
-    row_section = re.search(r"(?:Row Remapper|Remapped Rows)(?P<body>(?:\n[ \t]+[^\n]*)+)", text, re.IGNORECASE)
-    pending_m = _PENDING_RE.search(row_section.group("body")) if row_section else None
     return {
         "xids": xids,
         "remap_failure": (remap_fail_m.group(1).lower() == "yes") if remap_fail_m else None,
-        "pending": (pending_m.group(1).lower() == "yes") if pending_m else None,
+        "pending": row_remapper_pending(text),
         "thermal": bool(_THERMAL_RE.search(text)),
         "recovery_action": recovery[-1].strip().lower() if recovery else None,
     }

@@ -508,3 +508,20 @@ def test_conflicting_smi_uuids_remain_inconclusive():
 def test_repeated_smi_uuid_is_not_a_second_device():
     blob = "GPU UUID : GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\nGPU UUID : GPU-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\nXid 95"
     assert triage.triage_from_blob(blob)["action"] == "reset-gpu"
+
+
+@pytest.mark.parametrize("indent", ["    ", "\t"])
+def test_pending_in_later_section_is_not_remap_evidence(indent):
+    blob = (
+        f"Xid 63\n{indent}Remapped Rows\n{indent}{indent}Correctable Error : 0\n"
+        f"{indent}Unrelated Subsystem\n{indent}{indent}Pending : Yes"
+    )
+    assert triage.parse_blob(blob)["pending"] is None
+    assert triage.triage_from_blob(blob)["action"] == "watch"
+
+
+@pytest.mark.parametrize("header", ["Remapped Rows", "Row Remapper:"])
+def test_remap_pending_survives_blank_lines_and_stays_section_scoped(header):
+    blob = f"Xid 63\n    {header}\n\n        Pending : No\n    Other\n        Pending : Yes"
+    assert triage.parse_blob(blob)["pending"] is False
+    assert triage.triage_from_blob(blob)["action"] == "watch"
