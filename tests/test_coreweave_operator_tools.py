@@ -573,3 +573,42 @@ def test_fabric_rejects_conflicting_output_modes(mode):
         text=True,
     )
     assert result.returncode == 2 and not result.stdout
+
+
+@pytest.mark.parametrize(
+    "value", ["1e309", "1e-9999", "NaN", "Infinity", "-1", "12oops", "12 MB/s", "12 Gb/s", "1e", "1.2.3", ""]
+)
+def test_invalid_bandwidth_does_not_become_a_numeric_prefix(value):
+    result = fabric.diagnose(f"NCCL INFO Using network IB\n# Avg bus bandwidth : {value}")
+    assert result["observed_avg_busbw_gbps"] is None
+    assert result["bandwidth_evidence_status"] == "invalid"
+    assert any("bandwidth evidence is invalid" in gap for gap in result["missing_conditions"])
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("value, expected", [("0", 0.0), ("1.25", 1.25), ("1e2", 100.0), (".5 GB/s", 0.5)])
+def test_complete_finite_bandwidth_values_are_preserved(value, expected):
+    result = fabric.diagnose(f"# Avg bus bandwidth : {value}")
+    assert result["observed_avg_busbw_gbps"] == expected
+    assert result["bandwidth_evidence_status"] == "observed"
+
+
+def test_absent_bandwidth_is_not_measured_zero():
+    result = fabric.diagnose("NCCL INFO Using network IB")
+    assert result["observed_avg_busbw_gbps"] is None
+    assert result["bandwidth_evidence_status"] == "absent"
+
+
+def test_conflicting_bandwidth_summaries_do_not_select_the_first():
+    result = fabric.diagnose("Avg bus bandwidth : 10\nAvg bus bandwidth : 20")
+    assert result["observed_avg_busbw_gbps"] is None
+    assert result["bandwidth_evidence_status"] == "conflicting"
+    assert "conflicting" in fabric.render(result, detailed=False)
+
+
+def test_repeated_equivalent_bandwidth_values_are_not_conflicting():
+    assert fabric.bandwidth_evidence("Avg bus bandwidth : 1e1\nAvg bus bandwidth : 10 GB/s") == (10.0, "observed")
+
+
+def test_valid_bandwidth_does_not_hide_an_invalid_summary():
+    assert fabric.bandwidth_evidence("Avg bus bandwidth : 10\nAvg bus bandwidth : 1e309") == (None, "invalid")
