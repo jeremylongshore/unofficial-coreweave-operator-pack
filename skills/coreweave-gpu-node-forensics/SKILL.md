@@ -71,7 +71,7 @@ format should select `--full`; no output mode authorizes a recovery action.
 | Evidence problem | Response |
 |---|---|
 | Unknown Xid | Consult the current catalog and collect diagnostics; do not default to reset. |
-| Different GPU identities in a blob | Split the evidence; no single combined recovery action. |
+| Different recognized GPU identities in Xid lines, nvidia-smi GPU headers, Bus Id fields or GPU UUID fields | Split the evidence; no single combined recovery action. Unrecognized/redacted identity formats still need operator corroboration. |
 | Pending field outside Remapped Rows | Do not treat an unrelated Pending value as a memory-remap signal. |
 | PCIe-bus failure plus a remap field | Preserve the governing bus failure; a remap must not downgrade it to a simpler reset. |
 | No signal found | Report missing evidence, not a clean health result. |

@@ -43,7 +43,9 @@ not an exhaustive implementation of current NVIDIA parsing policy.
    explicit remap flags; blob mode parses its own evidence. Empty input is an error.
 2. `parse_blob()` extracts recognized Xids, remap fields, thermal activity and recovery
    action text. `triage_from_blob()` refuses a combined verdict for multiple recognized
-   GPU identities, then applies the supported recovery and governing-code rules.
+   GPU identities across Xid lines and supported nvidia-smi headers/fields, then applies
+   the supported recovery and governing-code rules. Four/eight-digit PCI domains are
+   normalized; conflicting explicit PCI functions or UUIDs remain separate devices.
 3. `classify_xid()` and `apply_remap_override()` produce qualified recommendations.
    Unknown codes remain investigate. PCIe failures cannot be softened by remap data;
    remap failure alone is not RMA authority. Xid 45 is a follow-on, and recognized Xid

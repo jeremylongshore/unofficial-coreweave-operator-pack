@@ -471,3 +471,40 @@ def test_triage_rejects_conflicting_output_modes(flags):
         text=True,
     )
     assert result.returncode == 2 and not result.stdout
+
+
+@pytest.mark.parametrize("header", ["GPU 00000000:04:00.0", "    Bus Id : 00000000:04:00.0"])
+def test_remap_on_different_smi_device_cannot_drive_xid_recovery(header):
+    blob = f"NVRM: Xid (PCI:0000:03:00): 63\n{header}\n    Remapped Rows\n        Pending : Yes"
+    result = triage.triage_from_blob(blob)
+    assert result["action"] == "investigate"
+    assert result["classification"] == "Multiple GPU identities in input"
+
+
+def test_matching_pci_domain_width_and_omitted_function_are_correlated():
+    blob = (
+        "NVRM: Xid (PCI:0000:AB:00): 63\nGPU 00000000:ab:00.0\n"
+        "    Bus Id : 00000000:AB:00.0\n    Remapped Rows\n        Pending : Yes"
+    )
+    assert triage.triage_from_blob(blob)["action"] == "reset-gpu"
+
+
+@pytest.mark.parametrize("second", ["GPU 00000001:03:00.0", "GPU 00000000:03:00.1"])
+def test_pci_domains_and_explicit_functions_are_not_collapsed(second):
+    blob = f"NVRM: Xid (PCI:0000:03:00.0): 63\n{second}\n    Remapped Rows\n        Pending : Yes"
+    assert triage.triage_from_blob(blob)["action"] == "investigate"
+
+
+def test_multiple_smi_devices_without_xids_remain_inconclusive():
+    blob = "GPU 00000000:03:00.0\n    Remapped Rows\n        Pending : Yes\nGPU 00000000:04:00.0\n"
+    assert triage.triage_from_blob(blob)["action"] == "investigate"
+
+
+def test_conflicting_smi_uuids_remain_inconclusive():
+    blob = "GPU UUID : GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\nGPU UUID : GPU-ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee\nXid 95"
+    assert triage.triage_from_blob(blob)["action"] == "investigate"
+
+
+def test_repeated_smi_uuid_is_not_a_second_device():
+    blob = "GPU UUID : GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\nGPU UUID : GPU-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\nXid 95"
+    assert triage.triage_from_blob(blob)["action"] == "reset-gpu"
