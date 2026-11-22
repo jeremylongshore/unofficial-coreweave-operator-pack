@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from decimal import Decimal, InvalidOperation
@@ -129,15 +130,42 @@ def detect_ibstat(text: str) -> tuple[str, list[str]]:
     return ("down" if notes else "ok" if states or physical else "absent", notes)
 
 
+def bandwidth_evidence(text: str) -> tuple[float | None, str]:
+    """Validate complete NCCL average values; never salvage a numeric prefix."""
+    candidates = re.findall(r"\bavg[ \t]+bus[ \t]+bandwidth[ \t]*[:=][ \t]*([^\r\n]*)", text, re.I)
+    if not candidates:
+        return None, "absent"
+    values = set()
+    for candidate in candidates:
+        # NCCL's unadorned summary is in GB/s. Do not silently reinterpret other
+        # units, suffixes, truncated exponents or trailing prose as that unit.
+        match = re.fullmatch(r"([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:[ \t]+GB/s)?", candidate.strip())
+        if not match:
+            return None, "invalid"
+        try:
+            value = Decimal(match.group(1))
+            number = float(value)
+        except (InvalidOperation, ValueError, OverflowError):
+            return None, "invalid"
+        if not value.is_finite() or not math.isfinite(number) or (value != 0 and number == 0):
+            return None, "invalid"
+        values.add(value)
+    if len(values) != 1:
+        return None, "conflicting"
+    return float(next(iter(values))), "observed"
+
+
 def detect_busbw(text: str) -> float | None:
-    match = re.search(r"avg\s+bus\s+bandwidth\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", text, re.I)
-    return float(match.group(1)) if match else None
+    return bandwidth_evidence(text)[0]
 
 
 def diagnose(text: str) -> dict:
     transport, gdr, failed = detect_transport(text)
     missing, manifest_seen = resource_findings(text)
     _, degraded = detect_ibstat(text)
+    busbw, busbw_status = bandwidth_evidence(text)
+    if busbw_status in ("invalid", "conflicting"):
+        missing.append(f"Average bus bandwidth evidence is {busbw_status}; obtain a complete summary for one run")
     if _IB_DISABLED.search(text):
         missing.append("NCCL_IB_DISABLE=1 disables the IB transport; review the effective environment")
     single_node = detect_single_node(text)
@@ -163,7 +191,8 @@ def diagnose(text: str) -> dict:
         "manifest_evidence_present": manifest_seen,
         "missing_conditions": missing,
         "degraded_signals": degraded,
-        "observed_avg_busbw_gbps": detect_busbw(text),
+        "observed_avg_busbw_gbps": busbw,
+        "bandwidth_evidence_status": busbw_status,
         "ib_attempt_failed_in_log": failed,
         "verdict": verdict,
         "fix": [
@@ -176,17 +205,22 @@ def diagnose(text: str) -> dict:
     }
 
 
-def render(result: dict) -> str:
+def render(result: dict, *, detailed: bool = True) -> str:
     lines = [
         f"VERDICT: {result['verdict']}",
         f"Transport: {result['transport']}",
         f"GPU Direct RDMA confirmed: {result['gpu_direct_rdma_confirmed']}",
+        f"Bandwidth evidence: {result['bandwidth_evidence_status']}",
+        "LIMIT: offline observations only; not a fabric-health certification or authorization to change a workload.",
     ]
     lines += [f"Evidence gap: {item}" for item in result["missing_conditions"]]
     lines += [f"Port observation: {item}" for item in result["degraded_signals"]]
     if result["observed_avg_busbw_gbps"] is not None:
         lines.append(f"Observed busbw: {result['observed_avg_busbw_gbps']} GB/s [unverified vs baseline]")
-    lines += [f"{i}. {step}" for i, step in enumerate(result["fix"], 1)]
+    if detailed:
+        lines += [f"{i}. {step}" for i, step in enumerate(result["fix"], 1)]
+    else:
+        lines.append("SAFETY: " + result["fix"][-1])
     return "\n".join(lines)
 
 
@@ -205,7 +239,10 @@ def self_test() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--in", dest="infile", default="-")
-    parser.add_argument("--json", action="store_true")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="Emit only the existing structured verdict.")
+    output.add_argument("--detailed", action="store_true", help="Add the complete proposed diagnostic checklist.")
+    output.add_argument("--full", action="store_true", help="Add the detailed report and complete verdict JSON.")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -220,7 +257,13 @@ def main() -> int:
     if not raw.strip():
         parser.error("empty diagnostic input")
     result = diagnose(raw)
-    print(json.dumps(result, indent=2, allow_nan=False) if args.json else render(result))
+    if args.json:
+        print(json.dumps(result, indent=2, allow_nan=False))
+    else:
+        print(render(result, detailed=args.detailed or args.full))
+        if args.full:
+            print()
+            print(json.dumps(result, indent=2, allow_nan=False))
     return 0
 
 
