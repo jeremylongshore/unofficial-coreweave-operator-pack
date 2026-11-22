@@ -420,3 +420,195 @@ def test_redacted_pci_tag_still_yields_code():
     assert triage.parse_blob("NVRM: Xid (PCI:<redacted>): 79, GPU has fallen off the bus")["xids"] == [79]
     assert triage.parse_blob("NVRM: Xid [REDACTED]: 79, GPU has fallen off the bus")["xids"] == [79]
     assert triage.parse_blob("NVRM: Xid ...: 13, Graphics Exception")["xids"] == [13]
+
+
+@pytest.mark.parametrize("mode", [[], ["--detailed"], ["--full"]])
+def test_triage_output_levels_preserve_safety(mode):
+    script = SKILLS / "coreweave-gpu-node-forensics/scripts/triage.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--xid", "95", *mode],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for warning in [
+        "confirmation required",
+        "recommendation only",
+        "GPU identity",
+        "lifecycle owner approval",
+        "Do NOT manually uncordon",
+    ]:
+        assert warning in result.stdout
+    assert ("NEXT:" in result.stdout) == bool(mode)
+    assert ('"recommendation_only": true' in result.stdout) == (mode == ["--full"])
+
+
+def test_triage_json_output_contract_is_unchanged():
+    script = SKILLS / "coreweave-gpu-node-forensics/scripts/triage.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--xid", "95", "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == triage.classify_xid(95)
+
+
+def test_triage_summary_keeps_unknown_evidence_and_co_occurring_codes():
+    verdict = triage.classify_xid(999)
+    verdict["co_occurring_xids"] = [998]
+    text = triage.render_verdict(verdict, detailed=False)
+    assert "investigate" in text and "CONFIDENCE: low" in text
+    assert "[unverified]" in text and "ALSO SEEN: Xid 998" in text
+
+
+@pytest.mark.parametrize("flags", [["--json", "--full"], ["--json", "--detailed"], ["--full", "--detailed"]])
+def test_triage_rejects_conflicting_output_modes(flags):
+    script = SKILLS / "coreweave-gpu-node-forensics/scripts/triage.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--xid", "95", *flags],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2 and not result.stdout
+
+
+@pytest.mark.parametrize("header", ["GPU 00000000:04:00.0", "    Bus Id : 00000000:04:00.0"])
+def test_remap_on_different_smi_device_cannot_drive_xid_recovery(header):
+    blob = f"NVRM: Xid (PCI:0000:03:00): 63\n{header}\n    Remapped Rows\n        Pending : Yes"
+    result = triage.triage_from_blob(blob)
+    assert result["action"] == "investigate"
+    assert result["classification"] == "Multiple GPU identities in input"
+
+
+def test_matching_pci_domain_width_and_omitted_function_are_correlated():
+    blob = (
+        "NVRM: Xid (PCI:0000:AB:00): 63\nGPU 00000000:ab:00.0\n"
+        "    Bus Id : 00000000:AB:00.0\n    Remapped Rows\n        Pending : Yes"
+    )
+    assert triage.triage_from_blob(blob)["action"] == "reset-gpu"
+
+
+@pytest.mark.parametrize("second", ["GPU 00000001:03:00.0", "GPU 00000000:03:00.1"])
+def test_pci_domains_and_explicit_functions_are_not_collapsed(second):
+    blob = f"NVRM: Xid (PCI:0000:03:00.0): 63\n{second}\n    Remapped Rows\n        Pending : Yes"
+    assert triage.triage_from_blob(blob)["action"] == "investigate"
+
+
+def test_multiple_smi_devices_without_xids_remain_inconclusive():
+    blob = "GPU 00000000:03:00.0\n    Remapped Rows\n        Pending : Yes\nGPU 00000000:04:00.0\n"
+    assert triage.triage_from_blob(blob)["action"] == "investigate"
+
+
+def test_conflicting_smi_uuids_remain_inconclusive():
+    blob = "GPU UUID : GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\nGPU UUID : GPU-ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee\nXid 95"
+    assert triage.triage_from_blob(blob)["action"] == "investigate"
+
+
+def test_repeated_smi_uuid_is_not_a_second_device():
+    blob = "GPU UUID : GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\nGPU UUID : GPU-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\nXid 95"
+    assert triage.triage_from_blob(blob)["action"] == "reset-gpu"
+
+
+@pytest.mark.parametrize("indent", ["    ", "\t"])
+def test_pending_in_later_section_is_not_remap_evidence(indent):
+    blob = (
+        f"Xid 63\n{indent}Remapped Rows\n{indent}{indent}Correctable Error : 0\n"
+        f"{indent}Unrelated Subsystem\n{indent}{indent}Pending : Yes"
+    )
+    assert triage.parse_blob(blob)["pending"] is None
+    assert triage.triage_from_blob(blob)["action"] == "watch"
+
+
+@pytest.mark.parametrize("header", ["Remapped Rows", "Row Remapper:"])
+def test_remap_pending_survives_blank_lines_and_stays_section_scoped(header):
+    blob = f"Xid 63\n    {header}\n\n        Pending : No\n    Other\n        Pending : Yes"
+    assert triage.parse_blob(blob)["pending"] is False
+    assert triage.triage_from_blob(blob)["action"] == "watch"
+
+
+@pytest.mark.parametrize("mode", [[], ["--detailed"], ["--full"]])
+def test_fabric_output_levels_keep_limits_and_degraded_evidence(mode):
+    script = SKILLS / "coreweave-fabric-diagnostics/scripts/fabric-check.py"
+    result = subprocess.run(
+        [sys.executable, str(script), *mode],
+        input="NCCL INFO Using network IB\nState: Down\nresources: {requests: {rdma/ib: 1}}\navg bus bandwidth: 10",
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for warning in [
+        "not a fabric-health certification",
+        "managed health cordon",
+        "Evidence gap:",
+        "Port observation:",
+        "unverified vs baseline",
+    ]:
+        assert warning in result.stdout
+    assert "GPU Direct RDMA confirmed: False" in result.stdout
+    assert ("1. Check InfiniBand-capable" in result.stdout) == bool(mode)
+    assert ('"gpu_direct_rdma_confirmed": false' in result.stdout) == (mode == ["--full"])
+
+
+def test_fabric_json_contract_is_unchanged():
+    script = SKILLS / "coreweave-fabric-diagnostics/scripts/fabric-check.py"
+    blob = "NCCL INFO Using network Socket"
+    result = subprocess.run(
+        [sys.executable, str(script), "--json"],
+        input=blob,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == fabric.diagnose(blob)
+
+
+@pytest.mark.parametrize("mode", [["--json", "--full"], ["--json", "--detailed"], ["--full", "--detailed"]])
+def test_fabric_rejects_conflicting_output_modes(mode):
+    script = SKILLS / "coreweave-fabric-diagnostics/scripts/fabric-check.py"
+    result = subprocess.run(
+        [sys.executable, str(script), *mode],
+        input="NCCL INFO Using network IB",
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2 and not result.stdout
+
+
+@pytest.mark.parametrize(
+    "value", ["1e309", "1e-9999", "NaN", "Infinity", "-1", "12oops", "12 MB/s", "12 Gb/s", "1e", "1.2.3", ""]
+)
+def test_invalid_bandwidth_does_not_become_a_numeric_prefix(value):
+    result = fabric.diagnose(f"NCCL INFO Using network IB\n# Avg bus bandwidth : {value}")
+    assert result["observed_avg_busbw_gbps"] is None
+    assert result["bandwidth_evidence_status"] == "invalid"
+    assert any("bandwidth evidence is invalid" in gap for gap in result["missing_conditions"])
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("value, expected", [("0", 0.0), ("1.25", 1.25), ("1e2", 100.0), (".5 GB/s", 0.5)])
+def test_complete_finite_bandwidth_values_are_preserved(value, expected):
+    result = fabric.diagnose(f"# Avg bus bandwidth : {value}")
+    assert result["observed_avg_busbw_gbps"] == expected
+    assert result["bandwidth_evidence_status"] == "observed"
+
+
+def test_absent_bandwidth_is_not_measured_zero():
+    result = fabric.diagnose("NCCL INFO Using network IB")
+    assert result["observed_avg_busbw_gbps"] is None
+    assert result["bandwidth_evidence_status"] == "absent"
+
+
+def test_conflicting_bandwidth_summaries_do_not_select_the_first():
+    result = fabric.diagnose("Avg bus bandwidth : 10\nAvg bus bandwidth : 20")
+    assert result["observed_avg_busbw_gbps"] is None
+    assert result["bandwidth_evidence_status"] == "conflicting"
+    assert "conflicting" in fabric.render(result, detailed=False)
+
+
+def test_repeated_equivalent_bandwidth_values_are_not_conflicting():
+    assert fabric.bandwidth_evidence("Avg bus bandwidth : 1e1\nAvg bus bandwidth : 10 GB/s") == (10.0, "observed")
+
+
+def test_valid_bandwidth_does_not_hide_an_invalid_summary():
+    assert fabric.bandwidth_evidence("Avg bus bandwidth : 10\nAvg bus bandwidth : 1e309") == (None, "invalid")
