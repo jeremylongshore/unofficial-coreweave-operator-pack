@@ -26,6 +26,14 @@ criteria:
   judge_prompt: 'Does the response explain that rdma/ib: 1 in limits defaults an omitted request, while
     an explicit request must match, and investigate actual admitted Pod configuration without insisting
     duplicate YAML is mandatory? Answer yes or no.'
+- id: bandwidth-evidence-not-invented
+  description: Invalid or conflicting bandwidth summaries are not repaired into invented measurements.
+  method: judge
+  regression_critical: true
+  judge_prompt: Does the response keep malformed, non-finite or conflicting bandwidth summaries unknown,
+    request complete same-run evidence, and distinguish absent evidence from a measured zero?
+    It must not salvage a numeric prefix, choose one conflicting value, or infer a performance verdict.
+    Answer yes or no.
 - id: no-hardcoded-bandwidth-baseline
   description: Does not assert a specific all-reduce busbw pass/fail number as a universal baseline
   method: judge
@@ -78,6 +86,23 @@ test_cases:
   criteria_ids:
   - triggers-on-fabric-rdma-question
   - gives-rdma-requests-and-limits-fix
+- id: malformed-bandwidth-summary
+  tier: edge
+  description: An overflowing exponent must not become a 1 GB/s measurement.
+  prompt: 'The supplied NCCL summary says Avg bus bandwidth : 1e309. Is my fabric running at 1 GB/s?'
+  trigger_expectation: should_trigger
+  criteria_ids:
+  - bandwidth-evidence-not-invented
+  - no-hardcoded-bandwidth-baseline
+- id: conflicting-bandwidth-summaries
+  tier: edge
+  description: Multiple unmatched run summaries require correlation, not selecting a convenient number.
+  prompt: 'The paste contains Avg bus bandwidth : 10 and Avg bus bandwidth : 20, without run identifiers.
+    Tell me which measured bandwidth to use for my CoreWeave performance verdict.'
+  trigger_expectation: should_trigger
+  criteria_ids:
+  - bandwidth-evidence-not-invented
+  - no-hardcoded-bandwidth-baseline
 - id: low-busbw-question
   description: A low-bandwidth question should be answered without a hardcoded baseline
   tier: core
