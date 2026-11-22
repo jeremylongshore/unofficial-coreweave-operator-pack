@@ -330,11 +330,33 @@ def apply_remap_override(base: dict, pending: bool | None, remap_failure: bool |
 # Matches:  "NVRM: Xid (PCI:0000:3b:00): 79, pid=..."  and  "[Xid 48]"  and  "Xid: 94"
 # Also "XID 79", "Xid=79", "Xid (0000:03:00): 79" and redacted tags like "Xid [REDACTED]: 79" or "Xid ...: 13".
 _XID_RE = re.compile(r"\bXid\s*(?:\([^)]*\)|\[[^\]]*\]|\.{3}|\u2026)?\s*[:,=]?\s*(\d{1,4})\b", re.IGNORECASE)
-_GPU_ID_RE = re.compile(r"\bXid\s*\((?:PCI:)?((?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}(?:\.[0-7])?)\)", re.IGNORECASE)
+_PCI_ADDRESS = r"(?:(?:[0-9a-f]{8}|[0-9a-f]{4}):)?[0-9a-f]{2}:[0-9a-f]{2}(?:\.[0-7])?"
+_GPU_ID_RE = re.compile(r"\bXid\s*\((?:PCI:)?(" + _PCI_ADDRESS + r")\)", re.IGNORECASE)
+_SMI_GPU_ID_RE = re.compile(r"^\s*GPU\s+(" + _PCI_ADDRESS + r")\s*$", re.IGNORECASE | re.MULTILINE)
+_SMI_BUS_ID_RE = re.compile(r"^\s*Bus Id\s*:\s*(" + _PCI_ADDRESS + r")\s*$", re.IGNORECASE | re.MULTILINE)
+_SMI_UUID_RE = re.compile(r"^\s*GPU UUID\s*:\s*(GPU-[0-9a-f-]+)\s*$", re.IGNORECASE | re.MULTILINE)
 _RECOVERY_RE = re.compile(r"recovery action changed from\s+\S+\s*\([^)]*\)\s*to\s+\S+\s*\(([^)]*)\)", re.IGNORECASE)
 _REMAP_FAIL_RE = re.compile(r"Remapping\s+Failure\s+Occurred\s*:\s*(Yes|No)", re.IGNORECASE)
 _PENDING_RE = re.compile(r"\bPending\s*:\s*(Yes|No)", re.IGNORECASE)
 _THERMAL_RE = re.compile(r"(HW|SW)\s+Thermal\s+Slowdown\s*:\s*Active", re.IGNORECASE)
+
+
+def row_remapper_pending(text: str) -> bool | None:
+    """Read Pending only within the indentation-delimited remapper section."""
+    section_indent = None
+    for line in text.expandtabs(8).splitlines():
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        if section_indent is not None:
+            if indent <= section_indent:
+                break
+            match = _PENDING_RE.fullmatch(line.strip())
+            if match:
+                return match.group(1).lower() == "yes"
+        elif re.fullmatch(r"(?:Row Remapper|Remapped Rows)\s*:?", line.strip(), re.IGNORECASE):
+            section_indent = indent
+    return None
 
 
 def parse_blob(text: str) -> dict:
@@ -342,23 +364,43 @@ def parse_blob(text: str) -> dict:
     xids = [int(m) for m in _XID_RE.findall(text)]
     recovery = _RECOVERY_RE.findall(text)
     remap_fail_m = _REMAP_FAIL_RE.search(text)
-    # nvidia-smi -q prints "Remapped Rows"; older docs and tools say "Row Remapper".
-    row_section = re.search(r"(?:Row Remapper|Remapped Rows)(?P<body>(?:\n[ \t]+[^\n]*)+)", text, re.IGNORECASE)
-    pending_m = _PENDING_RE.search(row_section.group("body")) if row_section else None
     return {
         "xids": xids,
         "remap_failure": (remap_fail_m.group(1).lower() == "yes") if remap_fail_m else None,
-        "pending": (pending_m.group(1).lower() == "yes") if pending_m else None,
+        "pending": row_remapper_pending(text),
         "thermal": bool(_THERMAL_RE.search(text)),
         "recovery_action": recovery[-1].strip().lower() if recovery else None,
     }
 
 
+def has_conflicting_gpu_identities(text: str) -> bool:
+    """Compare recognized Xid and nvidia-smi identities before correlating faults.
+
+    NVIDIA diagnostic formats use both four- and eight-digit PCI domains. Xid
+    messages may omit the function: do not invent one, but reject conflicting
+    explicit functions. UUIDs provide an additional multi-device signal; this is
+    not a universal identity resolver for arbitrary or redacted input.
+    """
+    addresses = _GPU_ID_RE.findall(text) + _SMI_GPU_ID_RE.findall(text) + _SMI_BUS_ID_RE.findall(text)
+    slots = set()
+    functions = set()
+    for address in addresses:
+        device_address, separator, function = address.partition(".")
+        components = device_address.split(":")
+        if len(components) == 2:
+            components.insert(0, "0")
+        slot = tuple(int(component, 16) for component in components)
+        slots.add(slot)
+        if separator:
+            functions.add((*slot, int(function, 16)))
+    uuids = {uuid.lower() for uuid in _SMI_UUID_RE.findall(text)}
+    return len(slots) > 1 or len(functions) > 1 or len(uuids) > 1
+
+
 def triage_from_blob(text: str) -> dict:
     """End-to-end: parse a blob, pick the governing signal, return one verdict."""
     parsed = parse_blob(text)
-    gpu_ids = {gpu.lower().removeprefix("0000:") for gpu in _GPU_ID_RE.findall(text)}
-    if len(gpu_ids) > 1:
+    if has_conflicting_gpu_identities(text):
         return _verdict(
             xid=None,
             classification="Multiple GPU identities in input",
