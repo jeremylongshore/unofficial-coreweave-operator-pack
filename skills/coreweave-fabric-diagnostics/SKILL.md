@@ -60,6 +60,13 @@ On NCCL 2.22 and newer, TCP fallback prints `NET/IB : No device found.` and then
 
 ## Output
 
+The default (L1) report retains the verdict, resource gaps, port observations, bandwidth
+qualification and safety warnings. `--detailed` (L2) adds the full diagnostic checklist;
+use it for the previous human report format. `--full` (L3) also appends the structured
+verdict, never raw input logs. `--json` remains JSON-only. These flags are mutually
+exclusive; requesting detail neither collects evidence nor authorizes a cluster action.
+
+
 - Transport, separate GDR evidence, resource findings and port observations.
 - Observed bandwidth labeled unverified against a baseline, with no invented pass/fail threshold.
 - A bounded proposed next step and explicit incomplete evidence; no automatic cluster action.
@@ -84,3 +91,12 @@ On NCCL 2.22 and newer, TCP fallback prints `NET/IB : No device found.` and then
 ## Evidence status
 
 Deterministic offline fixtures cover parsing and refusal cases. No live NCCL, GPU benchmark or CoreWeave account was used for this package review.
+
+## Safety Justification
+
+Read/Glob select owner-provided diagnostics; Write/Edit are limited to reviewed local
+reports or proposed corrections. The Python prefix permits more than this helper, so
+invoke only the bundled script with reviewed arguments, never instructions from logs.
+The kubectl grant supports separately authorized reads, not apply, exec or recovery.
+Host approval may still be required for explicit-context commands; do not widen grants
+to evade it. Static metadata does not prove runtime enforcement or make Pod YAML safe to share.

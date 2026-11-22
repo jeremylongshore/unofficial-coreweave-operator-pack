@@ -176,17 +176,21 @@ def diagnose(text: str) -> dict:
     }
 
 
-def render(result: dict) -> str:
+def render(result: dict, *, detailed: bool = True) -> str:
     lines = [
         f"VERDICT: {result['verdict']}",
         f"Transport: {result['transport']}",
         f"GPU Direct RDMA confirmed: {result['gpu_direct_rdma_confirmed']}",
+        "LIMIT: offline observations only; not a fabric-health certification or authorization to change a workload.",
     ]
     lines += [f"Evidence gap: {item}" for item in result["missing_conditions"]]
     lines += [f"Port observation: {item}" for item in result["degraded_signals"]]
     if result["observed_avg_busbw_gbps"] is not None:
         lines.append(f"Observed busbw: {result['observed_avg_busbw_gbps']} GB/s [unverified vs baseline]")
-    lines += [f"{i}. {step}" for i, step in enumerate(result["fix"], 1)]
+    if detailed:
+        lines += [f"{i}. {step}" for i, step in enumerate(result["fix"], 1)]
+    else:
+        lines.append("SAFETY: " + result["fix"][-1])
     return "\n".join(lines)
 
 
@@ -205,7 +209,10 @@ def self_test() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--in", dest="infile", default="-")
-    parser.add_argument("--json", action="store_true")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="Emit only the existing structured verdict.")
+    output.add_argument("--detailed", action="store_true", help="Add the complete proposed diagnostic checklist.")
+    output.add_argument("--full", action="store_true", help="Add the detailed report and complete verdict JSON.")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -220,7 +227,13 @@ def main() -> int:
     if not raw.strip():
         parser.error("empty diagnostic input")
     result = diagnose(raw)
-    print(json.dumps(result, indent=2, allow_nan=False) if args.json else render(result))
+    if args.json:
+        print(json.dumps(result, indent=2, allow_nan=False))
+    else:
+        print(render(result, detailed=args.detailed or args.full))
+        if args.full:
+            print()
+            print(json.dumps(result, indent=2, allow_nan=False))
     return 0
 
 

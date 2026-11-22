@@ -525,3 +525,51 @@ def test_remap_pending_survives_blank_lines_and_stays_section_scoped(header):
     blob = f"Xid 63\n    {header}\n\n        Pending : No\n    Other\n        Pending : Yes"
     assert triage.parse_blob(blob)["pending"] is False
     assert triage.triage_from_blob(blob)["action"] == "watch"
+
+
+@pytest.mark.parametrize("mode", [[], ["--detailed"], ["--full"]])
+def test_fabric_output_levels_keep_limits_and_degraded_evidence(mode):
+    script = SKILLS / "coreweave-fabric-diagnostics/scripts/fabric-check.py"
+    result = subprocess.run(
+        [sys.executable, str(script), *mode],
+        input="NCCL INFO Using network IB\nState: Down\nresources: {requests: {rdma/ib: 1}}\navg bus bandwidth: 10",
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for warning in [
+        "not a fabric-health certification",
+        "managed health cordon",
+        "Evidence gap:",
+        "Port observation:",
+        "unverified vs baseline",
+    ]:
+        assert warning in result.stdout
+    assert "GPU Direct RDMA confirmed: False" in result.stdout
+    assert ("1. Check InfiniBand-capable" in result.stdout) == bool(mode)
+    assert ('"gpu_direct_rdma_confirmed": false' in result.stdout) == (mode == ["--full"])
+
+
+def test_fabric_json_contract_is_unchanged():
+    script = SKILLS / "coreweave-fabric-diagnostics/scripts/fabric-check.py"
+    blob = "NCCL INFO Using network Socket"
+    result = subprocess.run(
+        [sys.executable, str(script), "--json"],
+        input=blob,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == fabric.diagnose(blob)
+
+
+@pytest.mark.parametrize("mode", [["--json", "--full"], ["--json", "--detailed"], ["--full", "--detailed"]])
+def test_fabric_rejects_conflicting_output_modes(mode):
+    script = SKILLS / "coreweave-fabric-diagnostics/scripts/fabric-check.py"
+    result = subprocess.run(
+        [sys.executable, str(script), *mode],
+        input="NCCL INFO Using network IB",
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2 and not result.stdout
