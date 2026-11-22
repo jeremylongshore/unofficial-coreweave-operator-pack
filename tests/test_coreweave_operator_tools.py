@@ -420,3 +420,54 @@ def test_redacted_pci_tag_still_yields_code():
     assert triage.parse_blob("NVRM: Xid (PCI:<redacted>): 79, GPU has fallen off the bus")["xids"] == [79]
     assert triage.parse_blob("NVRM: Xid [REDACTED]: 79, GPU has fallen off the bus")["xids"] == [79]
     assert triage.parse_blob("NVRM: Xid ...: 13, Graphics Exception")["xids"] == [13]
+
+
+@pytest.mark.parametrize("mode", [[], ["--detailed"], ["--full"]])
+def test_triage_output_levels_preserve_safety(mode):
+    script = SKILLS / "coreweave-gpu-node-forensics/scripts/triage.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--xid", "95", *mode],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for warning in [
+        "confirmation required",
+        "recommendation only",
+        "GPU identity",
+        "lifecycle owner approval",
+        "Do NOT manually uncordon",
+    ]:
+        assert warning in result.stdout
+    assert ("NEXT:" in result.stdout) == bool(mode)
+    assert ('"recommendation_only": true' in result.stdout) == (mode == ["--full"])
+
+
+def test_triage_json_output_contract_is_unchanged():
+    script = SKILLS / "coreweave-gpu-node-forensics/scripts/triage.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--xid", "95", "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == triage.classify_xid(95)
+
+
+def test_triage_summary_keeps_unknown_evidence_and_co_occurring_codes():
+    verdict = triage.classify_xid(999)
+    verdict["co_occurring_xids"] = [998]
+    text = triage.render_verdict(verdict, detailed=False)
+    assert "investigate" in text and "CONFIDENCE: low" in text
+    assert "[unverified]" in text and "ALSO SEEN: Xid 998" in text
+
+
+@pytest.mark.parametrize("flags", [["--json", "--full"], ["--json", "--detailed"], ["--full", "--detailed"]])
+def test_triage_rejects_conflicting_output_modes(flags):
+    script = SKILLS / "coreweave-gpu-node-forensics/scripts/triage.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--xid", "95", *flags],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2 and not result.stdout
