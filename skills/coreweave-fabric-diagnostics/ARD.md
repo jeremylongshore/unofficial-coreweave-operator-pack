@@ -44,7 +44,10 @@ not turn arbitrary YAML into a trusted Kubernetes object or an admitted Pod.
    may supply omitted requests; explicit requests must match. It never joins one
    container's request with another container's limit or validates an entire manifest.
 5. `detect_ibstat()` reports recognized logical/physical port observations;
-   `detect_busbw()` extracts a supported average-bandwidth line. No universal threshold,
+   `bandwidth_evidence()` validates complete average-bandwidth values and distinguishes
+   absent, invalid, conflicting and observed evidence. `detect_busbw()` retains the
+   nullable-number helper interface. Overflow, underflow-to-zero, unsupported units and
+   partial numeric tokens cannot become measurements. No universal threshold,
    causal slowdown or dollar saving is derived.
 6. `diagnose()` retains independent fields and proposes corroboration. `render()`
    presents the observations without executing its diagnostic checklist. The operator

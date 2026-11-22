@@ -69,6 +69,7 @@ exclusive; requesting detail neither collects evidence nor authorizes a cluster 
 
 - Transport, separate GDR evidence, resource findings and port observations.
 - Observed bandwidth labeled unverified against a baseline, with no invented pass/fail threshold.
+- `bandwidth_evidence_status` distinguishes absent, invalid, conflicting and observed summaries. Invalid or conflicting values stay null; measured zero stays zero. Only complete finite nonnegative values in the NCCL GB/s summary (optionally suffixed `GB/s`) are accepted; other units and partial numbers require new evidence.
 - A bounded proposed next step and explicit incomplete evidence; no automatic cluster action.
 
 ## Error Handling
