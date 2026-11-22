@@ -446,16 +446,19 @@ def _governing_rank(xid: int) -> int:
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
-def render_verdict(v: dict) -> str:
+def render_verdict(v: dict, *, detailed: bool = True) -> str:
     """Human-readable VERDICT block (the SKILL reasons over the JSON, humans read this)."""
     xid = v.get("xid")
     head = f"Xid {xid} — {v['classification']}" if xid is not None else v["classification"]
     lines = [
         f"VERDICT: {head} [severity: {v['severity'].upper()}]",
         f"RECOMMENDED ACTION (confirmation required): {v['action']}",
+        f"CONFIDENCE: {v['confidence']} — recommendation only, not permission to execute",
+        f"CONFIRM: {'; '.join(v['requires_confirmation'])}",
         f"WHY:     {v['why']}",
-        f"NEXT:    {v['next_command']}",
     ]
+    if detailed:
+        lines.append(f"NEXT:    {v['next_command']}")
     if v.get("co_occurring_xids"):
         lines.append(
             f"ALSO SEEN: Xid {', '.join(str(x) for x in v['co_occurring_xids'])} (governed by the most severe above)"
@@ -622,7 +625,12 @@ def main() -> int:
     ap.add_argument("--pending", help="Row-remapper 'Pending' state: yes|no.")
     ap.add_argument("--remap-failure", dest="remap_failure", help="'Remapping Failure Occurred' state: yes|no.")
     ap.add_argument("--blob", help="Path to a pasted dmesg/nvidia-smi blob ('-' for stdin).")
-    ap.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
+    output = ap.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="Emit machine-readable JSON only (unchanged contract).")
+    output.add_argument("--detailed", action="store_true", help="Include the next diagnostic step in the human report.")
+    output.add_argument(
+        "--full", action="store_true", help="Include the detailed human report and complete verdict JSON."
+    )
     ap.add_argument("--self-test", action="store_true", help="Run bundled fixtures and exit.")
     args = ap.parse_args()
 
@@ -663,16 +671,14 @@ def main() -> int:
             print("error: empty input blob", file=sys.stderr)
             return 1
         verdict = triage_from_blob(text)
-        # A standalone row-remap override may still apply when the user pastes an
-        # Xid AND supplies remap flags on the CLI alongside --blob (rare) — blob
-        # parsing already folded remap state in, so nothing more to do here.
 
     if args.json:
         print(json.dumps(verdict, indent=2))
     else:
-        print(render_verdict(verdict))
-        print()
-        print(json.dumps(verdict, indent=2))
+        print(render_verdict(verdict, detailed=args.detailed or args.full))
+        if args.full:
+            print()
+            print(json.dumps(verdict, indent=2))
     return 0
 
 
